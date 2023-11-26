@@ -1,0 +1,96 @@
+version: '2'
+
+services:
+  nard_master_mysql:
+    image: mysql:latest
+    container_name: nard_master_mysql
+    restart: unless-stopped
+    ports:
+      - 3306:3306
+    volumes:
+      - mysqldata_master:/var/lib/mysql
+      - ./conf.d/master.cnf:/etc/my.cnf
+      - ./create_user.sql:/docker-entrypoint-initdb.d/create_user.sql
+    environment:
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+
+  nard_slave_mysql:
+    image: mysql:latest
+    container_name: nard_slave_mysql
+    restart: unless-stopped
+    ports:
+      - 3307:3306
+    volumes:
+      - mysqldata_slave:/var/lib/mysql
+      - ./conf.d/slave.cnf:/etc/my.cnf
+      - ./create_master_slave_relation.sql:/docker-entrypoint-initdb.d/create_master_slave_relation.sql
+    depends_on:
+      - nard_master_mysql
+    environment:
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+
+  nard_backend_image:
+    depends_on:
+      - nard_master_mysql
+      - nard_slave_mysql
+    hostname: nard_backend_image_01
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8081"
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: npm run start:prod
+
+
+  migration:
+    build:
+      context: ./backend
+      dockerfile: migrate.Dockerfile
+    volumes:
+      - $PWD/:/tmp/
+    command: /bin/sh -c bin/boot
+    links:
+      - nard_master_mysql
+      - nard_slave_mysql
+    depends_on:
+      - nard_master_mysql
+      - nard_slave_mysql
+    env_file: ./backend/.env
+    environment:
+      - DB_HOST=nard_master_mysql
+
+  nginx:
+    image: nginx:latest
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - nard_backend_image
+    ports:
+      - "8081:4000"
+  
+  # nard_frontend_image:
+  #   depends_on:
+  #     - nard_master_mysql
+  #     - nard_slave_mysql
+  #   container_name: nard_frontend_image
+  #   env_file:
+  #     - ./frontend/.env
+  #   ports:
+  #     - 3000:3000
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: Dockerfile
+  #   command: npm run start
+
+
+volumes:
+  mysqldata_master:
+  mysqldata_slave:
